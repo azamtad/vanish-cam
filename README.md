@@ -1,6 +1,6 @@
 # VanishCam — webcam vanish effects (now with Goku Instant Transmission, runs on Mac)
 
-Video is processed on your computer. It is neither recorded nor sent anywhere. The preview window (and optional virtual camera) shows only the video and effects, no text overlays.
+Video is processed on your computer. It is neither recorded nor sent anywhere. The preview window shows short tips (press `H` to hide them); the optional virtual camera always gets the clean video without any text.
 
 Three effects:
 
@@ -10,7 +10,17 @@ Three effects:
 | **Normal Vanish** | V sign (index + middle apart) | You dissolve with a cyan edge over ~3.6 s |
 | **Naruto Vanish** | Palms pressed together in front of the camera | Smoke puff + wooden log substitution |
 
-## macOS — quick start
+## macOS — install as an app (recommended)
+
+1. Install **Python 3.12** once from <https://www.python.org/downloads/macos/> (skip if you already have it).
+2. In Finder, double-click **`Install VanishCam.command`** in this folder. A Terminal window shows the progress (first time ~2 min, needs internet). If macOS blocks it: right-click → **Open** → **Open**.
+3. When it's done, **VanishCam** is in your **Applications** folder and opens automatically. From then on, open it like any app (Launchpad, Spotlight `Cmd+Space` → "VanishCam", or drag it into the Dock). No Terminal needed.
+4. The first time, macOS asks to allow camera access for **VanishCam** → **OK**.
+5. Pick an effect, step out of the frame while the background is captured, step back in. The window tells you what to do.
+
+Where things live: the app is `/Applications/VanishCam.app`, its Python environment and downloaded models are in `~/Library/Application Support/VanishCam`, and the log is `~/Library/Logs/VanishCam.log`. After changing the code, run the installer again to update the app. To uninstall, delete the app and that Application Support folder.
+
+## macOS — run from Terminal (for development)
 
 1. **Python 3** must be installed. Easiest: download Python 3.12 from <https://www.python.org/downloads/macos/> (or `brew install python@3.12`).
 2. In Finder, open this folder and **double-click `start_mac_goku.command`** (Goku straight away) or **`start_mac.command`** (menu with all three modes).
@@ -28,7 +38,8 @@ Three effects:
 
 ### Doing the Goku teleport
 
-- Put your **index and middle fingers straight and together** (ring + pinky curled, like Goku) against your **forehead**, and hold still for **1 second**. The Terminal prints `Concentrating... keep holding.` and then `Instant Transmission!`
+
+- Put your **index and middle fingers straight and together** (ring + pinky curled, like Goku) against your **forehead**, and hold still for **1 second**. A progress bar fills up in the window, then you teleport.
 - To **come back**: lower your hand, then do the same gesture again for 1 second.
 - Brief tracking glitches (< 0.3 s) don't reset the countdown; actually breaking the pose does.
 - The Instant Transmission sound plays on both vanish and return. On first run it is downloaded from [myinstants](https://www.myinstants.com/en/instant/instant-transmission/) and saved as `assets/teleport.mp3`. To use a different sound, replace that file with any MP3. If it can't be downloaded, a built-in sound (`assets/teleport.wav`) is used.
@@ -40,8 +51,10 @@ Three effects:
 
 - `SPACE`: capture a new background (step out of the frame)
 - `V`: vanish now · `R`: reappear
+- `M`: back to the effect menu
+- `H`: hide / show the tips in the window (hide them when capturing the window in OBS)
 - `F`: toggle fullscreen
-- `Q` or `ESC`: quit
+- `Q`, `ESC` or closing the window: quit
 
 ## Useful options
 
@@ -55,7 +68,7 @@ Three effects:
 
 ## Using it in Zoom / Meet / Discord / OBS (optional)
 
-**Simplest:** in OBS add a **macOS Screen Capture / Window Capture** source, select the **VanishCam** window, then click **Start Virtual Camera** in OBS and pick "OBS Virtual Camera" in your call app.
+**Simplest:** press `H` to hide the tips, then in OBS add a **macOS Screen Capture / Window Capture** source, select the **VanishCam** window, then click **Start Virtual Camera** in OBS and pick "OBS Virtual Camera" in your call app.
 
 **Direct virtual camera:** install OBS Studio 30+, open it once and click **Start Virtual Camera** (this installs the macOS camera extension; approve it in System Settings if asked), then **Stop Virtual Camera** and quit OBS. Now run `./start_mac.command --virtual-camera` — VanishCam sends its output to "OBS Virtual Camera".
 
@@ -82,6 +95,10 @@ py -3 -m venv .venv && .venv\Scripts\pip install -r requirements.txt pyvirtualca
 - `goku_effect.py` — Goku gesture detection, hold timer, teleport animation, teleport sound generator
 - `naruto_effect.py` — Naruto smoke + log substitution
 - `vanish_sound.py` — non-blocking sound playback (`afplay` on macOS)
+- `hud.py` — on-screen tips in the preview window
+- `macos_app.py` — Mac app niceties (Dock icon, window focus, quit on close)
+- `Install VanishCam.command` — builds and installs `VanishCam.app`
+- `launcher.c` — tiny compiled starter for the app (needed so macOS shows the camera permission pop-up for VanishCam)
 - `hand_landmarker.task`, `face_landmarker.task` — MediaPipe models; `models/` gets the rest on first run
 - `test_goku_effect.py` — tests: `.venv-mac/bin/python -m unittest test_goku_effect`
 

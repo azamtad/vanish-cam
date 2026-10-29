@@ -39,6 +39,11 @@ try:
         load_log, overlay_log, render_substitution, substitution_anchor,
     )
     from .vanish_sound import SOUND_PATH, VanishSound
+    from .hud import FOOTER, draw_hud, tips_for
+    from .macos_app import (
+        WindowWatcher, bring_to_front, camera_permission_status, open_camera_settings,
+        request_camera_permission, set_app_name,
+    )
 except ImportError:
     from goku_effect import (
         TELEPORT_SECONDS, TELEPORT_SOUND_PATH, FaceMemory, HoldTrigger,
@@ -50,10 +55,21 @@ except ImportError:
         load_log, overlay_log, render_substitution, substitution_anchor,
     )
     from vanish_sound import SOUND_PATH, VanishSound
+    from hud import FOOTER, draw_hud, tips_for
+    from macos_app import (
+        WindowWatcher, bring_to_front, camera_permission_status, open_camera_settings,
+        request_camera_permission, set_app_name,
+    )
 
 
 APP_DIR = Path(__file__).resolve().parent
-MODEL_DIR = APP_DIR / "models"
+# Writable data (downloaded models, the teleport MP3). The Mac app sets
+# VANISHCAM_DATA to ~/Library/Application Support/VanishCam so it never
+# writes inside the (signed) app bundle.
+DATA_DIR = Path(os.environ.get("VANISHCAM_DATA") or APP_DIR)
+MODEL_DIR = DATA_DIR / "models"
+APP_ICON = APP_DIR / "assets" / "AppIcon.png"
+BACK_TO_MENU = 2
 WINDOW_NAME = "VanishCam"
 IS_MAC = platform.system() == "Darwin"
 IS_WINDOWS = platform.system() == "Windows"
@@ -136,6 +152,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Skip the start menu and launch this mode directly")
     parser.add_argument("--hold", type=float, default=1.0,
                         help="Goku mode: seconds to hold the fingers on the forehead (default 1.0)")
+    parser.add_argument("--no-hud", action="store_true",
+                        help="Do not show tips in the preview window (H toggles them)")
     parser.add_argument("--gesture-debug", action="store_true",
                         help="Print gesture recognition status in the terminal")
     parser.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
@@ -171,20 +189,24 @@ def choose_mode() -> str | None:
                 if top <= y <= top + 94:
                     selected[0] = mode
 
+    cv2.putText(window, "Click an effect or press 1, 2, 3   (Q quits)", (68, 112),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 160, 166), 1, cv2.LINE_AA)
     cv2.namedWindow(title, cv2.WINDOW_AUTOSIZE)
     cv2.setMouseCallback(title, on_mouse)
+    watcher = WindowWatcher(title, cv2)
     shown = 0
     try:
         while selected[0] is None:
             cv2.imshow(title, window)
             key = cv2.waitKey(30) & 0xFF
             shown += 1
+            if shown == 2:
+                bring_to_front(APP_ICON)
             if key in (ord("1"), ord("2"), ord("3")):
                 selected[0] = MENU_BUTTONS[key - ord("1")][0]
             elif key in (ord("q"), 27):
                 return None
-            # macOS reports window visibility unreliably; use Q/ESC there.
-            if not IS_MAC and shown > 5 and cv2.getWindowProperty(title, cv2.WND_PROP_VISIBLE) < 1:
+            if shown > 5 and watcher.closed():
                 return None
         return selected[0]
     finally:
@@ -299,7 +321,25 @@ def _camera_backends() -> list[tuple[str, int]]:
     return [("auto", cv2.CAP_ANY)]
 
 
-def open_camera(index: int, width: int, height: int) -> cv2.VideoCapture:
+def open_camera(index: int, width: int, height: int, wait_seconds: float = 0.0,
+                pump=None) -> cv2.VideoCapture:
+    """Open the webcam. ``wait_seconds`` keeps retrying (e.g. while macOS shows
+    the camera permission pop-up); ``pump`` keeps the window responsive."""
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            return _open_camera_once(index, width, height)
+        except RuntimeError:
+            if time.monotonic() >= deadline:
+                raise
+        for _ in range(10):
+            if pump is not None:
+                pump()
+            else:
+                time.sleep(0.1)
+
+
+def _open_camera_once(index: int, width: int, height: int) -> cv2.VideoCapture:
     attempts = []
     for name, backend in _camera_backends():
         capture = cv2.VideoCapture(index, backend)
@@ -322,7 +362,7 @@ def open_camera(index: int, width: int, height: int) -> cv2.VideoCapture:
     if IS_MAC:
         hint = (
             "On macOS: open System Settings > Privacy & Security > Camera and allow "
-            "Terminal (or the app you launched this from), then start again. "
+            "VanishCam (or Terminal, if you started it from Terminal), then start again. "
             "If macOS just asked for permission, click Allow and run it again. "
             "Close other apps using the camera (FaceTime, Zoom, Photo Booth). "
             "If you have an iPhone nearby, index 0 may be Continuity Camera: "
@@ -800,7 +840,7 @@ def set_fullscreen(enabled: bool) -> None:
 
 # Goku mode plays assets/teleport.mp3 if it exists. On first run it is
 # downloaded from the URL below; replace the file to use any other sound.
-TELEPORT_MP3_PATH = APP_DIR / "assets" / "teleport.mp3"
+TELEPORT_MP3_PATH = DATA_DIR / "assets" / "teleport.mp3"
 TELEPORT_MP3_URL = "https://www.myinstants.com/media/sounds/dragon_ball_z_tele.mp3"
 BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -815,6 +855,7 @@ def ensure_teleport_sound(download: bool = True) -> Path:
     if download:
         print("[VanishCam] Downloading the Instant Transmission sound (only once)...")
         try:
+            TELEPORT_MP3_PATH.parent.mkdir(parents=True, exist_ok=True)
             _fetch(TELEPORT_MP3_URL, TELEPORT_MP3_PATH, user_agent=BROWSER_USER_AGENT)
             with TELEPORT_MP3_PATH.open("rb") as file:
                 head = file.read(4)
@@ -857,11 +898,18 @@ def run(argv: list[str] | None = None) -> int:
         return self_test()
     if getattr(args, "list_cameras", False):
         return list_cameras()
-    mode = args.mode or choose_mode()
-    if mode is None:
-        return 0
-    with ExitStack() as resources:
-        return run_camera(args, resources, mode)
+    set_app_name("VanishCam")
+    mode = args.mode
+    while True:
+        if mode is None:
+            mode = choose_mode()
+        if mode is None:
+            return 0
+        with ExitStack() as resources:
+            result = run_camera(args, resources, mode)
+        if result != BACK_TO_MENU:
+            return result
+        mode = None
 
 
 def make_mp_image(frame: np.ndarray) -> mp.Image:
@@ -869,9 +917,48 @@ def make_mp_image(frame: np.ndarray) -> mp.Image:
     return mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
 
+def show_splash(text: str, width: int, height: int,
+                subtitle: str = "Starting the camera...") -> None:
+    splash = np.zeros((max(240, height), max(320, width), 3), dtype=np.uint8)
+    splash[:] = (26, 29, 34)
+    shown = draw_hud(splash, text, subtitle, big=True)
+    cv2.imshow(WINDOW_NAME, shown)
+    cv2.waitKey(1)
+
+
 def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str) -> int:
+    resources.callback(cv2.destroyAllWindows)
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW_NAME, args.width, args.height)
+    show_hud = not getattr(args, "no_hud", False)
+    if show_hud:
+        titles = {"goku": "Goku Instant Transmission", "naruto": "Naruto Vanish",
+                  "normal": "Normal Vanish"}
+        show_splash(titles.get(mode, "VanishCam"), args.width, args.height)
+        bring_to_front(APP_ICON)
     download_models(mode)
-    capture = open_camera(args.camera, args.width, args.height)
+    pump = (lambda: cv2.waitKey(30))
+    if IS_MAC:
+        status = camera_permission_status()
+        if status == "undetermined":
+            show_splash("Allow camera access", args.width, args.height,
+                        "Click OK in the macOS pop-up")
+            print("[VanishCam] Asking macOS for camera permission...")
+            request_camera_permission(pump=pump)
+            status = camera_permission_status()
+        if status in ("denied", "restricted"):
+            open_camera_settings()
+            raise RuntimeError(
+                "Camera access for VanishCam is turned off. In System Settings > "
+                "Privacy & Security > Camera, turn on VanishCam (the settings page "
+                "was just opened for you), then open VanishCam again."
+            )
+        if show_hud:
+            show_splash("Starting the camera...", args.width, args.height,
+                        "If macOS asks for camera access, click OK")
+    # On a Mac, keep retrying for a while: the permission pop-up may be open.
+    capture = open_camera(args.camera, args.width, args.height,
+                          wait_seconds=60.0 if IS_MAC else 0.0, pump=pump)
     resources.callback(capture.release)
     capture.set(cv2.CAP_PROP_FPS, args.fps)
     segmenter, recognizer = create_tasks(mode)
@@ -885,9 +972,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str) -> int
         effect_sound = VanishSound(ensure_teleport_sound())
     if effect_sound is not None:
         resources.callback(effect_sound.close)
-    resources.callback(cv2.destroyAllWindows)
-    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WINDOW_NAME, args.width, args.height)
+    watcher = WindowWatcher(WINDOW_NAME, cv2)
+    frame_count = 0
 
     state = AppState(calibration_started=time.perf_counter(), fullscreen=args.fullscreen)
     if state.fullscreen:
@@ -1107,11 +1193,25 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str) -> int
 
             if virtual_camera is not None:
                 send_virtual_frame(virtual_camera, display)
-            cv2.imshow(WINDOW_NAME, display)
+            preview = display
+            if show_hud:
+                tip = tips_for(mode, state.phase, calibration_remaining,
+                               goku_trigger.progress(now), goku_trigger.armed)
+                preview = draw_hud(display, footer=FOOTER, **(tip or {"title": None}))
+            cv2.imshow(WINDOW_NAME, preview)
+            frame_count += 1
+            if frame_count == 2:
+                bring_to_front(APP_ICON)
 
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
                 break
+            if frame_count > 10 and frame_count % 5 == 0 and watcher.closed():
+                break  # red close button: quit and release the camera
+            if key == ord("m"):
+                return BACK_TO_MENU
+            if key == ord("h"):
+                show_hud = not show_hud
             if key == ord(" "):
                 state.phase = "calibrating"
                 state.calibration_started = now
