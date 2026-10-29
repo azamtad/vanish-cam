@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import mediapipe as mp
 
-from local_app.vanish_cam import (
+from vanish_cam import (
     AppState, MultiViewGestureRecognizer, recognize_gesture, start_vanish_on_gesture,
     victory_landmark_score,
 )
