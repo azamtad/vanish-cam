@@ -106,4 +106,4 @@ py -3 -m venv .venv && .venv\Scripts\pip install -r requirements.txt pyvirtualca
 
 All effects are drawn in code — no anime frames or sprites are included. The wooden log (`assets/substitution_log.png`) is an original illustration; smoke and the Goku light/speed lines are procedural. Goku mode uses MediaPipe's Face Landmarker (forehead position) and Hand Landmarker (fingers).
 
-Original VanishCam project: if you like it you can support the original author via [PayPal](https://paypal.me/nicovic17) or [Revolut](https://revolut.me/nicoauriemma).
+Original VanishCam project: if you like it you can support the original author - https://github.com/Nicovic17
